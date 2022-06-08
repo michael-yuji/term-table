@@ -133,6 +133,14 @@ impl RowLayout {
                   }
     }
 
+    pub fn with_cols<const N: usize>(column: ColumnLayout, sep: String) -> RowLayout {
+        RowLayout { start: "".to_string()
+                  , end:   "".to_string()
+                  , sep
+                  , columns: vec![column; N]
+                  }
+    }
+
     pub fn set_start_token(&mut self, token: String) {
         self.start = token;
     }
@@ -231,6 +239,11 @@ impl Renderer {
                     once = true;
                 }
                 col.render(*min, *max, &deque.pop_front().expect(""), &mut buf);
+                /* reset bound */
+                if deque.len() == 0 {
+                    *min = usize::MAX;
+                    *max = 0;
+                }
             }
             buf.push_str(def.end.as_str());
         }
