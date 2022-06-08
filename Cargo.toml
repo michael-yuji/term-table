@@ -1,0 +1,9 @@
+[package]
+name = "term-table"
+version = "0.0.1"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+termchars = { git = "https://github.com/michael-yuji/termchars.git" }
