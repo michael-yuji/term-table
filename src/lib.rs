@@ -2,6 +2,9 @@
 use termchars::TermString;
 use std::collections::VecDeque;
 
+use std::rc::Rc;
+use std::cell::RefCell;
+
 #[derive(Copy, Clone, Debug)]
 pub enum Pos {
     Left,
@@ -17,8 +20,8 @@ pub struct ColumnLayout {
     pad_char: char
 }
 
-impl ColumnLayout {
-
+impl ColumnLayout
+{
     pub fn align(pos: Pos, pad_char: char) -> ColumnLayout {
         ColumnLayout { lower_bound: 0
                      , upper_bound: None
@@ -117,11 +120,28 @@ impl ColumnLayout {
 }
 
 #[derive(Clone, Debug)]
+pub struct Column {
+    layout: ColumnLayout,
+    min: usize,
+    max: usize
+}
+
+impl Column {
+    fn new(layout: ColumnLayout) -> Rc<RefCell<Column>> {
+      Rc::new(RefCell::new(Column { layout, min: usize::MAX, max: 0 }))
+    }
+
+    pub fn render(&self, value: &str, out: &mut String) {
+        self.layout.render(self.min, self.max, value, out);
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct RowLayout {
     start: String,
     end:   String,
     sep:   String,
-    columns: Vec<ColumnLayout>
+    columns: Vec<Rc<RefCell<Column>>>
 }
 
 impl RowLayout {
@@ -132,38 +152,43 @@ impl RowLayout {
                   , columns: vec![]
                   }
     }
-
     pub fn with_cols<const N: usize>(column: ColumnLayout, sep: String) -> RowLayout {
         RowLayout { start: "".to_string()
                   , end:   "".to_string()
-                  , sep
-                  , columns: vec![column; N]
+                  , sep:   sep.to_string()
+                  , columns: vec![Column::new(column); N]
                   }
     }
-
     pub fn set_start_token(&mut self, token: String) {
         self.start = token;
     }
-
     pub fn set_end_token(&mut self, token: String) {
         self.end = token;
     }
-
     pub fn set_separator(&mut self, token: String) {
         self.sep = token;
     }
-
-    pub fn push_column(&mut self, column: ColumnLayout) {
-        self.columns.push(column)
+    pub fn push_column(&mut self, column: &Rc<RefCell<Column>>) {
+        self.columns.push(Rc::clone(column))
     }
-
-    pub fn extend_columns(&mut self, columns: &[ColumnLayout]) {
-        self.columns.extend(columns)
+    pub fn push_column_layout(&mut self, column: ColumnLayout) {
+        self.columns.push(Column::new(column));
+    }
+    pub fn extend_column_layouts(&mut self, columns: &[ColumnLayout]) {
+        let cols: Vec<_> = columns.iter().map(|c| Column::new(c.clone())).collect();
+        self.columns.extend(cols)
+    }
+    pub fn reset(&mut self) {
+        for column in self.columns.iter() {
+            let mut col = column.borrow_mut();
+            col.min = usize::MAX;
+            col.max = 0;
+        }
     }
 }
 
 pub struct Renderer {
-    rules: Vec<(RowLayout, Vec<(usize, usize, VecDeque<String>)>)>,
+    rules: Vec<(RowLayout, Vec<VecDeque<String>>)>,
     newline: String,
     begin: String,
     end: String,
@@ -171,7 +196,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new() -> Renderer {
+   pub fn new() -> Renderer {
         Renderer { rules: vec![]
                  , newline: "\n".to_string()
                  , begin: "".to_string()
@@ -193,9 +218,9 @@ impl Renderer {
     }
 
     pub fn register_layout(&mut self, layout: RowLayout) -> usize {
-        let new_id  = self.rules.len();
-        let ins_dat = vec![(usize::MAX,0,VecDeque::new());layout.columns.len()];
-        self.rules.push((layout.clone(), ins_dat));
+        let new_id = self.rules.len();
+        let count  = &layout.columns.len();
+        self.rules.push((layout, vec![VecDeque::new(); *count]));
         new_id
     }
 
@@ -204,14 +229,18 @@ impl Renderer {
             // check if the dimential matches between the column definiton and
             // input data
             if def.columns.len() == data.len() && cols_dat.len() == data.len() {
-                for (i, (lowest, highest, values)) in cols_dat.iter_mut().enumerate() {
-                    let text = TermString::new(&data[i], false).unwrap();
-                    let text_len = text.visible_chars_count();
-                    *lowest = std::cmp::min(*lowest, text_len);
-                    *highest = std::cmp::max(*highest, text_len);
-                    (*values).push_back(data[i].clone());
-                }
+                let cols = def.columns.iter_mut();
+                let col_dat  = cols_dat.iter_mut();
+                let dat  = data.iter();
 
+                for (col, (col_dat, dat)) in cols.zip(col_dat.zip(dat)) {
+                    let text = TermString::new(dat, false).unwrap();
+                    let text_len = text.visible_chars_count();
+                    let mut col = col.borrow_mut();
+                    col.min = std::cmp::min(col.min, text_len);
+                    col.max = std::cmp::max(col.max, text_len);
+                    col_dat.push_back(dat.to_string());
+                }
                 self.write_logs.push_back(layout)
             }
         }
@@ -232,31 +261,63 @@ impl Renderer {
             // Iterate the state and definition together
             let zipped = cols_dat.iter_mut().zip(def.columns.iter());
             // For each column in the row
-            for ((min, max, deque), col) in zipped {
+            for (deque, col) in zipped {
                 if once {
                     buf.push_str(def.sep.as_str());
                 } else {
                     once = true;
                 }
-                col.render(*min, *max, &deque.pop_front().expect(""), &mut buf);
-                /* reset bound */
-                if deque.len() == 0 {
-                    *min = usize::MAX;
-                    *max = 0;
-                }
+
+                col.borrow().render(&deque.pop_front().expect(""), &mut buf);
             }
             buf.push_str(def.end.as_str());
+        }
+
+        for (row, _) in self.rules.iter_mut() {
+            row.reset()
         }
         buf
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn test_multi_layout() {
+        let col0 = Column::new(ColumnLayout::align(Pos::Right, '0'));
+        let col1 = ColumnLayout::align(Pos::Right, '0');
+        let col2 = ColumnLayout::fixed_width(5, '-');
+        let col3 = ColumnLayout::fixed_width(5, ' ');
+
+        let mut row1 = RowLayout::new();
+        row1.push_column(&col0);
+        row1.set_separator("|".to_string());
+        row1.push_column_layout(col1);
+        row1.push_column_layout(col3);
+
+        let mut row2 = RowLayout::new();
+        row2.push_column(&col0);
+        row2.set_separator("|".to_string());
+        row2.push_column_layout(col2);
+        row2.push_column_layout(col3);
+
+        let mut r = Renderer::new();
+        let h1 = r.register_layout(row1);
+        let h2 = r.register_layout(row2);
+
+        r.write_to_layout(h1, &["123".to_string(), "hello".to_string(), "world".to_string()]);
+        r.write_to_layout(h2, &["12345".to_string(), "does-it".to_string(), "work".to_string()]);
+        r.write_to_layout(h1, &["1".to_string(), "longlong".to_string(), "a".to_string()]);
+
+        let emit = r.flush();
+
+        assert_eq!(emit.as_str(),
+          "00123|000hello|world\n12345|does-| work\n00001|longlong|    a");
+
+    }
 
     #[test]
     fn test_multi_format() {
@@ -265,13 +326,13 @@ mod tests {
         let col3 = ColumnLayout::fixed_width(5, ' ');
         let mut row1 = RowLayout::new();
         row1.set_separator("|".to_string());
-        row1.push_column(col1);
-        row1.push_column(col3);
+        row1.push_column_layout(col1);
+        row1.push_column_layout(col3);
 
         let mut row2 = RowLayout::new();
         row2.set_separator("|".to_string());
-        row2.push_column(col2);
-        row2.push_column(col3);
+        row2.push_column_layout(col2);
+        row2.push_column_layout(col3);
 
         let mut r = Renderer::new();
         let h1 = r.register_layout(row1);
@@ -324,7 +385,7 @@ mod tests {
         let col = ColumnLayout::fixed_width(5, ' ');
         let mut row = RowLayout::new();
         row.set_separator(" ".to_string());
-        row.extend_columns(&col.repeat(3));
+        row.extend_column_layouts(&col.repeat(3));
         let mut renderer = Renderer::new();
         let handle = renderer.register_layout(row);
         renderer.write_to_layout(
@@ -345,7 +406,7 @@ mod tests {
         row.set_separator(", ".to_string());
         row.set_start_token("[".to_string());
         row.set_end_token("]".to_string());
-        row.extend_columns(&unbound_col.repeat(3));
+        row.extend_column_layouts(&unbound_col.repeat(3));
 
         let mut renderer = Renderer::new();
         let handle = renderer.register_layout(row);
