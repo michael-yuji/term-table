@@ -39,7 +39,7 @@ impl ColumnLayout
     }
 
     pub fn repeat(&self, count: usize) -> Vec<ColumnLayout> {
-        vec![self.clone(); count]
+        vec![*self; count]
     }
 
     pub fn set_lower_bound(&mut self, lower_bound: usize) {
@@ -72,7 +72,7 @@ impl ColumnLayout
 
         let (clone, pads_needed) = match self.upper_bound {
             None => {
-                (text.truncated(count).to_string(), max - count)
+                (text.truncated(count), max - count)
             }
             Some(bound) => {
                 let needed = if count > self.lower_bound {
@@ -82,9 +82,9 @@ impl ColumnLayout
                 };
 
                 if count > bound {
-                    (text.truncated(bound).to_string(), needed)
+                    (text.truncated(bound), needed)
                 } else {
-                    (text.truncated(count).to_string(), needed)
+                    (text.truncated(count), needed)
                 }
             }
         };
@@ -144,6 +144,16 @@ pub struct RowLayout {
     columns: Vec<Rc<RefCell<Column>>>
 }
 
+impl Default for RowLayout {
+    fn default() -> Self {
+        RowLayout { start: "".to_string()
+                  , end:   "".to_string()
+                  , sep:   "".to_string()
+                  , columns: vec![]
+                  }
+    }
+}
+
 impl RowLayout {
     pub fn new() -> RowLayout {
         RowLayout { start: "".to_string()
@@ -155,7 +165,7 @@ impl RowLayout {
     pub fn with_cols<const N: usize>(column: ColumnLayout, sep: String) -> RowLayout {
         RowLayout { start: "".to_string()
                   , end:   "".to_string()
-                  , sep:   sep.to_string()
+                  , sep
                   , columns: vec![Column::new(column); N]
                   }
     }
@@ -175,7 +185,7 @@ impl RowLayout {
         self.columns.push(Column::new(column));
     }
     pub fn extend_column_layouts(&mut self, columns: &[ColumnLayout]) {
-        let cols: Vec<_> = columns.iter().map(|c| Column::new(c.clone())).collect();
+        let cols: Vec<_> = columns.iter().map(|c| Column::new(*c)).collect();
         self.columns.extend(cols)
     }
     pub fn reset(&mut self) {
@@ -193,6 +203,17 @@ pub struct Renderer {
     begin: String,
     end: String,
     write_logs: VecDeque<usize>
+}
+
+impl Default for Renderer {
+    fn default() -> Self {
+        Renderer { rules: vec![]
+                 , newline: "\n".to_string()
+                 , begin: "".to_string()
+                 , end: "".to_string()
+                 , write_logs: VecDeque::new()
+                 }
+    }
 }
 
 impl Renderer {
@@ -359,7 +380,7 @@ mod tests {
 
         {
             let mut buffer = String::new();
-            column.render(0, 8, &"meow", &mut buffer);
+            column.render(0, 8, "meow", &mut buffer);
             assert_eq!(buffer.as_str(), "meow    ");
         }
     }
@@ -375,7 +396,7 @@ mod tests {
 
         {
             let mut buffer = String::new();
-            column.render(0, 8, &"meow", &mut buffer);
+            column.render(0, 8, "meow", &mut buffer);
             assert_eq!(buffer.as_str(), "  meow  ");
         }
     }
