@@ -127,7 +127,7 @@ pub struct Column {
 }
 
 impl Column {
-    fn new(layout: ColumnLayout) -> Rc<RefCell<Column>> {
+    pub fn new(layout: ColumnLayout) -> Rc<RefCell<Column>> {
       Rc::new(RefCell::new(Column { layout, min: usize::MAX, max: 0 }))
     }
 
