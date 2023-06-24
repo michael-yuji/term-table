@@ -1,7 +1,7 @@
+pub mod homogeneous;
 
 use termchars::TermString;
 use std::collections::VecDeque;
-
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -62,31 +62,30 @@ impl ColumnLayout
         self.pad_char = pad_char;
     }
 
-    fn render(&self, min: usize, max: usize, value: &str, out: &mut String) {
+    fn render(&self, min: usize, max: usize, value: &str, out: &mut String)
+    {
         if min > max {
             panic!("min > max");
         }
 
         let text = TermString::new(value, false).unwrap();
         let count = text.clone().visible_chars_count();
+        let adjusted_upper_bound = match self.upper_bound {
+            None => max,
+            Some(ub) => ub.min(max)
+        };
+        let adjusted_lower_bound = self.lower_bound.max(max);
 
-        let (clone, pads_needed) = match self.upper_bound {
-            None => {
-                (text.truncated(count), max - count)
-            }
-            Some(bound) => {
-                let needed = if count > self.lower_bound {
-                    0
-                } else {
-                    self.lower_bound - count
-                };
+        let truncated = if count > adjusted_upper_bound {
+            text.truncated(adjusted_upper_bound)
+        } else {
+            text.truncated(count)
+        };
 
-                if count > bound {
-                    (text.truncated(bound), needed)
-                } else {
-                    (text.truncated(count), needed)
-                }
-            }
+        let pads_needed = if adjusted_lower_bound > count {
+            adjusted_lower_bound - count
+        } else {
+            0
         };
 
         match self.pos {
@@ -94,10 +93,10 @@ impl ColumnLayout
                 for _ in 0..pads_needed {
                     out.push(self.pad_char);
                 }
-                out.push_str(clone.as_str())
+                out.push_str(truncated.as_str())
             }
             Pos::Left => {
-                out.push_str(clone.as_str());
+                out.push_str(truncated.as_str());
                 for _ in 0..pads_needed {
                     out.push(self.pad_char);
                 }
@@ -107,7 +106,7 @@ impl ColumnLayout
                 for _ in 0..pad_count {
                     out.push(self.pad_char);
                 }
-                out.push_str(clone.as_str());
+                out.push_str(truncated.as_str());
                 for _ in 0..pad_count {
                     out.push(self.pad_char);
                 }
@@ -269,12 +268,12 @@ impl Renderer {
 
     pub fn flush(&mut self) -> String {
         let mut buf = String::new();
-        let mut is_fst_line = false;
+        let mut not_first_line = false;
         while let Some(rule_idx) = self.write_logs.pop_front() {
-            if is_fst_line {
+            if not_first_line {
                 buf.push_str(self.newline.as_str());
             } else {
-                is_fst_line = true;
+                not_first_line = true;
             }
             let (def, cols_dat) = self.rules.get_mut(rule_idx).unwrap();
             let mut once = false;
